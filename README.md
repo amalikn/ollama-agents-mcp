@@ -121,6 +121,24 @@ Use full commands only when overriding models/behavior:
 - `setup_ollama_agents_environment(...)`
 - `run_ollama_agents_pipeline(...)`
 
+## Guided Inputs (Options + Defaults)
+
+If you want selectable options with default-enter behavior:
+
+1. `list_pipeline_run_options()`
+- returns available `work/*` input files
+- returns currently installed Ollama models from `ollama list`
+- returns defaults used by guided run
+2. `run_pipeline_guided(...)`
+- leave fields blank to use defaults
+- set only fields you care about (for example `collector_model`)
+
+Example:
+
+- `run_pipeline_guided()`
+- `run_pipeline_guided(collector_model="deepseek-r1:latest")`
+- `run_pipeline_guided(input_file="work/input.txt")`
+
 ## Path Placeholders
 
 - `<MCP_STUFF_ROOT>`: parent MCP checkout root (example: `/Volumes/Data/_ai/_mcp/mcp_stuff`)
@@ -154,8 +172,10 @@ When setup is used, it creates:
 - `setup_ollama_agents_environment`
 - `setup_default_environment`
 - `setup_and_run_default_pipeline`
+- `list_pipeline_run_options`
 - `run_ollama_agents_pipeline`
 - `run_default_pipeline`
+- `run_pipeline_guided`
 - `run_role_agent`
 - `list_agent_roles`
 - `get_agent_role_prompt`
@@ -233,6 +253,11 @@ Fast path (recommended):
 - `setup_default_environment()`
 - `run_default_pipeline()`
 - `setup_and_run_default_pipeline()`
+
+Guided path (option listing + defaults):
+
+- `list_pipeline_run_options()`
+- `run_pipeline_guided()`
 
 Create environment only (uses default workspace under `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace`):
 

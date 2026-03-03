@@ -376,6 +376,47 @@ def _run_pipeline(
   )
 
 
+def _list_workspace_inputs(base_dir: Path) -> List[str]:
+  work_dir = base_dir / "work"
+  if not work_dir.exists():
+    return []
+  files: List[str] = []
+  for path in sorted(work_dir.glob("*")):
+    if path.is_file():
+      files.append(f"work/{path.name}")
+  return files
+
+
+def _default_input_file(base_dir: Path) -> str:
+  preferred = base_dir / "work" / "input.txt"
+  if preferred.exists():
+    return "work/input.txt"
+  files = _list_workspace_inputs(base_dir)
+  if files:
+    return files[0]
+  return "work/input.txt"
+
+
+def _list_ollama_models() -> List[str]:
+  result = _run_command(["ollama", "list"], timeout_sec=30)
+  if not result["ok"]:
+    return []
+  models: List[str] = []
+  for line in result["stdout"].splitlines():
+    raw = line.strip()
+    if not raw or raw.lower().startswith("name "):
+      continue
+    model = raw.split()[0]
+    if model not in models:
+      models.append(model)
+  return models
+
+
+def _resolve_model_choice(choice: str, fallback: str) -> str:
+  picked = choice.strip()
+  return picked if picked else fallback
+
+
 @mcp.tool()
 def health_check() -> Dict[str, Any]:
   """Check readiness for creating and running local Ollama sub-agent environments."""
@@ -401,8 +442,10 @@ def health_check() -> Dict[str, Any]:
       "setup_ollama_agents_environment",
       "setup_default_environment",
       "setup_and_run_default_pipeline",
+      "list_pipeline_run_options",
       "run_ollama_agents_pipeline",
       "run_default_pipeline",
+      "run_pipeline_guided",
       "run_role_agent",
       "list_agent_roles",
       "get_agent_role_prompt",
@@ -553,6 +596,27 @@ def run_ollama_agents_pipeline(
 
 
 @mcp.tool()
+def list_pipeline_run_options(base_dir: str = "") -> Dict[str, Any]:
+  """List available workspace input files and local Ollama models with defaults."""
+  target = _resolve_base_dir(base_dir)
+  return {
+    "ok": True,
+    "base_dir": str(target),
+    "available_input_files": _list_workspace_inputs(target),
+    "available_ollama_models": _list_ollama_models(),
+    "defaults": {
+      "input_file": _default_input_file(target),
+      "collector_model": "deepseek-r1:latest",
+      "writer_model": "llama3.1:8b",
+      "reviewer_model": "deepseek-r1:latest",
+      "collector_retries": 3,
+      "enforce_schema": False,
+    },
+    "hint": "Leave parameters blank in run_pipeline_guided to accept defaults.",
+  }
+
+
+@mcp.tool()
 def setup_default_environment(
   base_dir: str = "",
   overwrite: bool = False,
@@ -578,6 +642,42 @@ def run_default_pipeline(
     base_dir=base_dir,
     pipeline_input_file=input_file,
   )
+
+
+@mcp.tool()
+def run_pipeline_guided(
+  base_dir: str = "",
+  input_file: str = "",
+  collector_model: str = "",
+  writer_model: str = "",
+  reviewer_model: str = "",
+  collector_retries: int = 3,
+  enforce_schema: bool = False,
+) -> Dict[str, Any]:
+  """Run pipeline with optional blanks; blank values auto-resolve to defaults."""
+  target = _resolve_base_dir(base_dir)
+  resolved_input = input_file.strip() or _default_input_file(target)
+  resolved_collector = _resolve_model_choice(collector_model, "deepseek-r1:latest")
+  resolved_writer = _resolve_model_choice(writer_model, "llama3.1:8b")
+  resolved_reviewer = _resolve_model_choice(reviewer_model, "deepseek-r1:latest")
+  result = run_ollama_agents_pipeline(
+    base_dir=str(target),
+    pipeline_input_file=resolved_input,
+    collector_model=resolved_collector,
+    writer_model=resolved_writer,
+    reviewer_model=resolved_reviewer,
+    collector_retries=collector_retries,
+    enforce_schema=enforce_schema,
+  )
+  return {
+    **result,
+    "resolved": {
+      "input_file": resolved_input,
+      "collector_model": resolved_collector,
+      "writer_model": resolved_writer,
+      "reviewer_model": resolved_reviewer,
+    },
+  }
 
 
 @mcp.tool()
