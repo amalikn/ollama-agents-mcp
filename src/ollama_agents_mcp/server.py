@@ -66,6 +66,9 @@ set -euo pipefail
 MODEL_COLLECTOR="${MODEL_COLLECTOR:-deepseek-r1:latest}"
 MODEL_WRITER="${MODEL_WRITER:-llama3.1:8b}"
 MODEL_REVIEWER="${MODEL_REVIEWER:-deepseek-r1:latest}"
+COLLECTOR_RETRIES="${COLLECTOR_RETRIES:-3}"
+ENFORCE_SCHEMA="${ENFORCE_SCHEMA:-false}"
+SCHEMA_REQUIRED_KEYS="${SCHEMA_REQUIRED_KEYS:-incidents,changes,metrics,risks,next_month_plan}"
 
 WORKDIR="${WORKDIR:-work}"
 INPUT_FILE="${1:-work/input.txt}"
@@ -92,22 +95,75 @@ run_agent () {
   } | ollama run "$model" > "$out_file"
 }
 
-# 1) Collector
-COLLECT_OUT="$WORKDIR/01_collector_$(ts).md"
-run_agent "$MODEL_COLLECTOR" "agents/collector.md" "$INPUT_FILE" "$COLLECT_OUT"
-
-# Extract JSON for writer (first ```json ... ``` block)
-JSON_OUT="$WORKDIR/02_data.json"
-python3 - "$COLLECT_OUT" "$JSON_OUT" <<'PY'
-import re, sys, json, pathlib
+extract_json () {
+  local in_file="$1"
+  local out_file="$2"
+  python3 - "$in_file" "$out_file" <<'PY'
+import json, pathlib, re, sys
 src = pathlib.Path(sys.argv[1]).read_text(errors="ignore")
+
+# First try explicit fenced JSON block.
 m = re.search(r"```json\\s*(\\{.*?\\})\\s*```", src, flags=re.S)
-if not m:
-    print("ERROR: collector output missing ```json``` block", file=sys.stderr)
-    sys.exit(2)
-obj = json.loads(m.group(1))
-pathlib.Path(sys.argv[2]).write_text(json.dumps(obj, indent=2))
+if m:
+    obj = json.loads(m.group(1))
+    pathlib.Path(sys.argv[2]).write_text(json.dumps(obj, indent=2))
+    sys.exit(0)
+
+# Fallback: first decodable JSON object anywhere in the output.
+decoder = json.JSONDecoder()
+for idx, ch in enumerate(src):
+    if ch != "{":
+        continue
+    try:
+        obj, end = decoder.raw_decode(src[idx:])
+        if isinstance(obj, dict):
+            pathlib.Path(sys.argv[2]).write_text(json.dumps(obj, indent=2))
+            sys.exit(0)
+    except json.JSONDecodeError:
+        continue
+
+print("ERROR: collector output missing parseable JSON object", file=sys.stderr)
+sys.exit(2)
 PY
+}
+
+validate_schema () {
+  local json_file="$1"
+  python3 - "$json_file" "$SCHEMA_REQUIRED_KEYS" <<'PY'
+import json, pathlib, sys
+obj = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if not isinstance(obj, dict):
+    print("ERROR: JSON root must be an object", file=sys.stderr)
+    sys.exit(3)
+required = [k.strip() for k in sys.argv[2].split(",") if k.strip()]
+missing = [k for k in required if k not in obj]
+if missing:
+    print("ERROR: schema validation failed; missing keys: " + ", ".join(missing), file=sys.stderr)
+    sys.exit(3)
+PY
+}
+
+# 1) Collector (with retry + robust JSON extraction)
+JSON_OUT="$WORKDIR/02_data.json"
+COLLECT_OUT=""
+success=0
+for attempt in $(seq 1 "$COLLECTOR_RETRIES"); do
+  COLLECT_OUT="$WORKDIR/01_collector_$(ts)_try${attempt}.md"
+  run_agent "$MODEL_COLLECTOR" "agents/collector.md" "$INPUT_FILE" "$COLLECT_OUT"
+  if extract_json "$COLLECT_OUT" "$JSON_OUT"; then
+    success=1
+    break
+  fi
+done
+
+if [[ "$success" -ne 1 ]]; then
+  echo "ERROR: collector failed to produce valid JSON after $COLLECTOR_RETRIES attempts" >&2
+  exit 2
+fi
+
+if [[ "${ENFORCE_SCHEMA,,}" == "true" ]]; then
+  validate_schema "$JSON_OUT"
+fi
 
 # 2) Writer
 WRITER_IN="$WORKDIR/03_writer_input.md"
@@ -297,7 +353,15 @@ def _pull_models(models: List[str]) -> List[Dict[str, Any]]:
   return results
 
 
-def _run_pipeline(base_dir: Path, input_file: str, collector_model: str, writer_model: str, reviewer_model: str) -> Dict[str, Any]:
+def _run_pipeline(
+  base_dir: Path,
+  input_file: str,
+  collector_model: str,
+  writer_model: str,
+  reviewer_model: str,
+  collector_retries: int = 3,
+  enforce_schema: bool = False,
+) -> Dict[str, Any]:
   return _run_command(
     ["./run_agents.sh", input_file],
     cwd=base_dir,
@@ -306,6 +370,8 @@ def _run_pipeline(base_dir: Path, input_file: str, collector_model: str, writer_
       "MODEL_COLLECTOR": collector_model,
       "MODEL_WRITER": writer_model,
       "MODEL_REVIEWER": reviewer_model,
+      "COLLECTOR_RETRIES": str(max(1, collector_retries)),
+      "ENFORCE_SCHEMA": "true" if enforce_schema else "false",
     },
   )
 
@@ -327,6 +393,8 @@ def health_check() -> Dict[str, Any]:
       "collector_model": "deepseek-r1:latest",
       "writer_model": "llama3.1:8b",
       "reviewer_model": "deepseek-r1:latest",
+      "collector_retries": 3,
+      "enforce_schema": False,
     },
     "tools": [
       "health_check",
@@ -352,6 +420,8 @@ def setup_ollama_agents_environment(
   collector_model: str = "deepseek-r1:latest",
   writer_model: str = "llama3.1:8b",
   reviewer_model: str = "deepseek-r1:latest",
+  collector_retries: int = 3,
+  enforce_schema: bool = False,
 ) -> Dict[str, Any]:
   """Setup and/or run the local Ollama sub-agent pipeline.
 
@@ -365,6 +435,8 @@ def setup_ollama_agents_environment(
     collector_model: Collector model name for optional pull
     writer_model: Writer model name for optional pull
     reviewer_model: Reviewer model name for optional pull
+    collector_retries: Retries for collector JSON extraction failures
+    enforce_schema: If true, require strict schema keys in collector JSON
   """
   normalized_action = action.strip().lower()
   if normalized_action not in ALLOWED_ACTIONS:
@@ -394,7 +466,15 @@ def setup_ollama_agents_environment(
         "error": f"Missing {run_script}. Run with action='setup' first or set base_dir correctly.",
         "base_dir": str(target),
       }
-    pipeline_result = _run_pipeline(target, pipeline_input_file, collector_model, writer_model, reviewer_model)
+    pipeline_result = _run_pipeline(
+      target,
+      pipeline_input_file,
+      collector_model,
+      writer_model,
+      reviewer_model,
+      collector_retries,
+      enforce_schema,
+    )
 
   manifest = {
     "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -406,6 +486,8 @@ def setup_ollama_agents_environment(
     "pull_models": pull_models,
     "model_pulls": [{"model": r["model"], "ok": r["ok"], "returncode": r["returncode"]} for r in model_pull_results],
     "pipeline_input_file": pipeline_input_file if do_run else None,
+    "collector_retries": collector_retries if do_run else None,
+    "enforce_schema": enforce_schema if do_run else None,
     "pipeline_ok": None if pipeline_result is None else pipeline_result["ok"],
   }
 
@@ -435,6 +517,8 @@ def run_ollama_agents_pipeline(
   collector_model: str = "deepseek-r1:latest",
   writer_model: str = "llama3.1:8b",
   reviewer_model: str = "deepseek-r1:latest",
+  collector_retries: int = 3,
+  enforce_schema: bool = False,
 ) -> Dict[str, Any]:
   """Run the existing pipeline without modifying setup files."""
   target = _resolve_base_dir(base_dir)
@@ -446,11 +530,21 @@ def run_ollama_agents_pipeline(
       "base_dir": str(target),
     }
 
-  pipeline_result = _run_pipeline(target, pipeline_input_file, collector_model, writer_model, reviewer_model)
+  pipeline_result = _run_pipeline(
+    target,
+    pipeline_input_file,
+    collector_model,
+    writer_model,
+    reviewer_model,
+    collector_retries,
+    enforce_schema,
+  )
   return {
     "ok": pipeline_result["ok"],
     "base_dir": str(target),
     "pipeline_input_file": pipeline_input_file,
+    "collector_retries": collector_retries,
+    "enforce_schema": enforce_schema,
     "pipeline_result": pipeline_result,
   }
 

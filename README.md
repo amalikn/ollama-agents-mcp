@@ -125,6 +125,7 @@ Setup and run in one call:
 Run pipeline directly:
 
 - `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt")`
+- `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt", collector_retries=3, enforce_schema=true)`
 
 Run a single role directly (works for future added roles too):
 
@@ -150,3 +151,5 @@ Delete a role prompt:
 
 - Requires local `python3` and `ollama`.
 - Model pulls and pipeline execution can take several minutes depending on model size and hardware.
+- Pipeline hardening includes collector retry and fallback JSON extraction when fenced blocks are missing.
+- `enforce_schema=true` validates collector JSON contains keys: `incidents,changes,metrics,risks,next_month_plan`.
