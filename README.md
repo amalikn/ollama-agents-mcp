@@ -23,6 +23,29 @@ Think of it as a small offline workflow engine:
 
 These are separate role runs with a shared workspace. They are not autonomous background workers.
 
+## Pipeline Artifacts (What You Get Every Run)
+
+Under `work/`, each run creates:
+
+- `01_collector_<timestamp>_tryN.md`: raw collector output
+- `02_data.json`: normalized source-of-truth data used by writer and reviewer
+- `04_report_<timestamp>.md`: generated draft report
+- `06_review_<timestamp>.md`: PASS/FAIL review and required fixes
+
+Why this matters:
+
+- if report text looks wrong, inspect `02_data.json` first
+- if JSON is wrong, inspect collector output and input notes
+- reviewer output tells you exactly what to fix before sharing
+
+## Typical Operator Flow
+
+1. Paste current month notes into `work/input.txt` (incidents, changes, metrics, risks, next plan)
+2. Run setup once (or when role prompts/scripts change)
+3. Run pipeline
+4. Open `02_data.json`, `04_report_*.md`, and `06_review_*.md`
+5. Apply reviewer-required fixes and re-run if needed
+
 ## Core Use Cases
 
 1. Monthly or weekly ops reports
@@ -70,9 +93,9 @@ Prereqs:
 Then run:
 
 1. `health_check()`
-2. `setup_ollama_agents_environment(action="setup", create_test_input=true)`
+2. `setup_default_environment()`
 3. `list_agent_roles()` (expect `collector`, `writer`, `reviewer`)
-4. `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt", collector_model="deepseek-r1:latest")`
+4. `run_default_pipeline()`
 
 Expected outputs under `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/work`:
 
@@ -84,6 +107,19 @@ Expected outputs under `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/work`:
 Optional hardening on run:
 
 - `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt", collector_retries=3, enforce_schema=true)`
+
+## Intuitive Commands (Short Aliases)
+
+Use these for day-to-day work:
+
+- `setup_default_environment()`
+- `run_default_pipeline()`
+- `setup_and_run_default_pipeline()`
+
+Use full commands only when overriding models/behavior:
+
+- `setup_ollama_agents_environment(...)`
+- `run_ollama_agents_pipeline(...)`
 
 ## Path Placeholders
 
@@ -116,7 +152,10 @@ When setup is used, it creates:
 
 - `health_check`
 - `setup_ollama_agents_environment`
+- `setup_default_environment`
+- `setup_and_run_default_pipeline`
 - `run_ollama_agents_pipeline`
+- `run_default_pipeline`
 - `run_role_agent`
 - `list_agent_roles`
 - `get_agent_role_prompt`
@@ -188,6 +227,12 @@ OLLAMA_AGENTS_BASE_DIR = "<MCP_DATA_ROOT>/ollama-agents-mcp/workspace"
 ```
 
 ## Example Tool Usage
+
+Fast path (recommended):
+
+- `setup_default_environment()`
+- `run_default_pipeline()`
+- `setup_and_run_default_pipeline()`
 
 Create environment only (uses default workspace under `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace`):
 

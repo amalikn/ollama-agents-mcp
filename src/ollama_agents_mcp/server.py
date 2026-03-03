@@ -399,7 +399,10 @@ def health_check() -> Dict[str, Any]:
     "tools": [
       "health_check",
       "setup_ollama_agents_environment",
+      "setup_default_environment",
+      "setup_and_run_default_pipeline",
       "run_ollama_agents_pipeline",
+      "run_default_pipeline",
       "run_role_agent",
       "list_agent_roles",
       "get_agent_role_prompt",
@@ -547,6 +550,52 @@ def run_ollama_agents_pipeline(
     "enforce_schema": enforce_schema,
     "pipeline_result": pipeline_result,
   }
+
+
+@mcp.tool()
+def setup_default_environment(
+  base_dir: str = "",
+  overwrite: bool = False,
+  create_test_input: bool = True,
+) -> Dict[str, Any]:
+  """Short alias for default setup with built-in role prompts and optional test input."""
+  return setup_ollama_agents_environment(
+    action="setup",
+    base_dir=base_dir,
+    overwrite=overwrite,
+    pull_models=False,
+    create_test_input=create_test_input,
+  )
+
+
+@mcp.tool()
+def run_default_pipeline(
+  base_dir: str = "",
+  input_file: str = "work/input.txt",
+) -> Dict[str, Any]:
+  """Short alias for running the pipeline with default models and hardening settings."""
+  return run_ollama_agents_pipeline(
+    base_dir=base_dir,
+    pipeline_input_file=input_file,
+  )
+
+
+@mcp.tool()
+def setup_and_run_default_pipeline(
+  base_dir: str = "",
+  overwrite: bool = False,
+  create_test_input: bool = True,
+  input_file: str = "work/input.txt",
+) -> Dict[str, Any]:
+  """One-call setup and run using default models."""
+  return setup_ollama_agents_environment(
+    action="setup_and_run",
+    base_dir=base_dir,
+    overwrite=overwrite,
+    pull_models=False,
+    create_test_input=create_test_input,
+    pipeline_input_file=input_file,
+  )
 
 
 @mcp.tool()
