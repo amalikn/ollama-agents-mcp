@@ -17,11 +17,11 @@ Tool `setup_ollama_agents_environment` supports actions:
 
 When setup is used, it creates:
 
-- `~/ollama-agents/agents/collector.md`
-- `~/ollama-agents/agents/writer.md`
-- `~/ollama-agents/agents/reviewer.md`
-- `~/ollama-agents/run_agents.sh`
-- `~/ollama-agents/work/input.txt` (optional)
+- `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/agents/collector.md`
+- `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/agents/writer.md`
+- `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/agents/reviewer.md`
+- `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/run_agents.sh`
+- `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/work/input.txt` (optional)
 
 `run_agents.sh` executes the 3-stage flow:
 
@@ -33,6 +33,12 @@ When setup is used, it creates:
 
 - `health_check`
 - `setup_ollama_agents_environment`
+- `run_ollama_agents_pipeline`
+- `run_role_agent`
+- `list_agent_roles`
+- `get_agent_role_prompt`
+- `upsert_agent_role_prompt`
+- `delete_agent_role_prompt`
 
 ## Data Root Policy
 
@@ -43,6 +49,7 @@ Runtime state for this MCP is persisted under:
 Configure with env var:
 
 - `OLLAMA_AGENTS_MCP_STATE_DIR`
+- `OLLAMA_AGENTS_BASE_DIR` (optional override for workspace path)
 
 The server stores the latest action manifest in `last_action.json` in this state dir.
 
@@ -71,6 +78,7 @@ args = ["-lc", "mkdir -p <MCP_DATA_ROOT>/ollama-agents-mcp && cd <MCP_STUFF_ROOT
 
 [mcp_servers.ollama-agents-mcp.env]
 OLLAMA_AGENTS_MCP_STATE_DIR = "<MCP_DATA_ROOT>/ollama-agents-mcp"
+OLLAMA_AGENTS_BASE_DIR = "<MCP_DATA_ROOT>/ollama-agents-mcp/workspace"
 ```
 
 ## Claude Code Config Example
@@ -88,7 +96,8 @@ OLLAMA_AGENTS_MCP_STATE_DIR = "<MCP_DATA_ROOT>/ollama-agents-mcp"
         "mkdir -p <MCP_DATA_ROOT>/ollama-agents-mcp && cd <MCP_STUFF_ROOT>/ollama-agents-mcp && exec ./venv/bin/python run_server.py"
       ],
       "env": {
-        "OLLAMA_AGENTS_MCP_STATE_DIR": "<MCP_DATA_ROOT>/ollama-agents-mcp"
+        "OLLAMA_AGENTS_MCP_STATE_DIR": "<MCP_DATA_ROOT>/ollama-agents-mcp",
+        "OLLAMA_AGENTS_BASE_DIR": "<MCP_DATA_ROOT>/ollama-agents-mcp/workspace"
       }
     }
   }
@@ -97,21 +106,45 @@ OLLAMA_AGENTS_MCP_STATE_DIR = "<MCP_DATA_ROOT>/ollama-agents-mcp"
 
 ## Example Tool Usage
 
-Create environment only:
+Create environment only (uses default workspace under `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace`):
 
-- `setup_ollama_agents_environment(action="setup", base_dir="~/ollama-agents")`
+- `setup_ollama_agents_environment(action="setup")`
 
 Run existing pipeline only:
 
-- `setup_ollama_agents_environment(action="run", base_dir="~/ollama-agents", pipeline_input_file="work/input.txt")`
+- `setup_ollama_agents_environment(action="run", pipeline_input_file="work/input.txt")`
 
 Create environment and pull models:
 
-- `setup_ollama_agents_environment(action="setup", base_dir="~/ollama-agents", pull_models=true)`
+- `setup_ollama_agents_environment(action="setup", pull_models=true)`
 
 Setup and run in one call:
 
-- `setup_ollama_agents_environment(action="setup_and_run", base_dir="~/ollama-agents", pull_models=true, pipeline_input_file="work/input.txt")`
+- `setup_ollama_agents_environment(action="setup_and_run", pull_models=true, pipeline_input_file="work/input.txt")`
+
+Run pipeline directly:
+
+- `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt")`
+
+Run a single role directly (works for future added roles too):
+
+- `run_role_agent(role="collector", input_file="work/input.txt", model="deepseek-r1:latest")`
+
+List current role prompts:
+
+- `list_agent_roles()`
+
+Read one role prompt:
+
+- `get_agent_role_prompt(role="collector")`
+
+Add a new role prompt (future expansion):
+
+- `upsert_agent_role_prompt(role="analyst", prompt="ROLE: Analyst...")`
+
+Delete a role prompt:
+
+- `delete_agent_role_prompt(role="analyst", confirm=true)`
 
 ## Notes
 

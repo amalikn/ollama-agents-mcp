@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("ollama-agents-mcp")
 
 DEFAULT_STATE_DIR = "/Volumes/Data/_ai/mcp-data/ollama-agents-mcp"
-DEFAULT_BASE_DIR = "~/ollama-agents"
 ALLOWED_ACTIONS = {"setup", "run", "setup_and_run"}
 
 COLLECTOR_PROMPT = """ROLE: Collector
@@ -51,6 +51,13 @@ RULES:
   - Issues (bullets)
   - Required fixes (bullets)
 """
+
+DEFAULT_ROLE_PROMPTS: Dict[str, str] = {
+  "collector": COLLECTOR_PROMPT,
+  "writer": WRITER_PROMPT,
+  "reviewer": REVIEWER_PROMPT,
+}
+ROLE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 RUN_AGENTS_SH = """#!/usr/bin/env bash
 set -euo pipefail
@@ -158,6 +165,35 @@ def _state_dir() -> Path:
   return path
 
 
+def _default_base_dir() -> Path:
+  raw = os.getenv("OLLAMA_AGENTS_BASE_DIR", "").strip()
+  if raw:
+    return Path(raw).expanduser().resolve()
+  return _state_dir() / "workspace"
+
+
+def _resolve_base_dir(base_dir: str) -> Path:
+  return Path(base_dir).expanduser().resolve() if base_dir.strip() else _default_base_dir()
+
+
+def _validate_role_name(role: str) -> str:
+  normalized = role.strip().lower()
+  if not normalized or not ROLE_NAME_RE.fullmatch(normalized):
+    raise ValueError("role must match ^[a-zA-Z0-9_-]{1,64}$")
+  return normalized
+
+
+def _role_file_path(base_dir: Path, role: str) -> Path:
+  return base_dir / "agents" / f"{role}.md"
+
+
+def _list_role_names(base_dir: Path) -> List[str]:
+  agents_dir = base_dir / "agents"
+  if not agents_dir.exists():
+    return []
+  return sorted(path.stem for path in agents_dir.glob("*.md"))
+
+
 def _run_command(
   argv: List[str],
   cwd: Path | None = None,
@@ -180,6 +216,34 @@ def _run_command(
     "ok": proc.returncode == 0,
     "returncode": proc.returncode,
     "command": " ".join(shlex.quote(a) for a in argv),
+    "stdout": proc.stdout,
+    "stderr": proc.stderr,
+  }
+
+
+def _run_ollama_with_system_user(model: str, system_prompt: str, user_text: str, timeout_sec: int = 1800) -> Dict[str, Any]:
+  payload = "\n".join(
+    [
+      "=== SYSTEM ===",
+      system_prompt,
+      "",
+      "=== USER ===",
+      user_text,
+    ]
+  )
+  proc = subprocess.run(
+    ["ollama", "run", model],
+    text=True,
+    input=payload,
+    capture_output=True,
+    timeout=timeout_sec,
+    check=False,
+    env=os.environ.copy(),
+  )
+  return {
+    "ok": proc.returncode == 0,
+    "returncode": proc.returncode,
+    "command": f"ollama run {shlex.quote(model)}",
     "stdout": proc.stdout,
     "stderr": proc.stderr,
   }
@@ -211,9 +275,9 @@ def _setup_environment(base_dir: Path, overwrite: bool, create_test_input: bool)
   work_dir.mkdir(parents=True, exist_ok=True)
 
   created: Dict[str, str] = {}
-  created[str(agents_dir / "collector.md")] = _write_file(agents_dir / "collector.md", COLLECTOR_PROMPT, overwrite)
-  created[str(agents_dir / "writer.md")] = _write_file(agents_dir / "writer.md", WRITER_PROMPT, overwrite)
-  created[str(agents_dir / "reviewer.md")] = _write_file(agents_dir / "reviewer.md", REVIEWER_PROMPT, overwrite)
+  for role, prompt in DEFAULT_ROLE_PROMPTS.items():
+    role_file = _role_file_path(base_dir, role)
+    created[str(role_file)] = _write_file(role_file, prompt, overwrite)
   created[str(base_dir / "run_agents.sh")] = _write_file(base_dir / "run_agents.sh", RUN_AGENTS_SH, overwrite)
 
   run_script = base_dir / "run_agents.sh"
@@ -258,19 +322,29 @@ def health_check() -> Dict[str, Any]:
       "ollama": _check_binary("ollama"),
     },
     "defaults": {
-      "base_dir": DEFAULT_BASE_DIR,
+      "base_dir": str(_default_base_dir()),
       "action": "setup",
       "collector_model": "deepseek-r1:latest",
       "writer_model": "llama3.1:8b",
       "reviewer_model": "deepseek-r1:latest",
     },
+    "tools": [
+      "health_check",
+      "setup_ollama_agents_environment",
+      "run_ollama_agents_pipeline",
+      "run_role_agent",
+      "list_agent_roles",
+      "get_agent_role_prompt",
+      "upsert_agent_role_prompt",
+      "delete_agent_role_prompt",
+    ],
   }
 
 
 @mcp.tool()
 def setup_ollama_agents_environment(
   action: str = "setup",
-  base_dir: str = DEFAULT_BASE_DIR,
+  base_dir: str = "",
   overwrite: bool = False,
   pull_models: bool = False,
   create_test_input: bool = True,
@@ -283,7 +357,7 @@ def setup_ollama_agents_environment(
 
   Args:
     action: One of setup, run, setup_and_run
-    base_dir: Target directory for the environment (default: ~/ollama-agents)
+    base_dir: Target directory for environment files (default: <MCP_DATA_ROOT>/ollama-agents-mcp/workspace)
     overwrite: Replace existing files when true
     pull_models: Run `ollama pull` for collector/writer/reviewer models
     create_test_input: Create work/input.txt sample file
@@ -301,7 +375,7 @@ def setup_ollama_agents_environment(
 
   do_setup = normalized_action in {"setup", "setup_and_run"}
   do_run = normalized_action in {"run", "setup_and_run"}
-  target = Path(base_dir).expanduser().resolve()
+  target = _resolve_base_dir(base_dir)
 
   created: Dict[str, str] = {}
   if do_setup:
@@ -351,6 +425,204 @@ def setup_ollama_agents_environment(
       "ls -lh work",
     ],
     "state_file": str(state_file),
+  }
+
+
+@mcp.tool()
+def run_ollama_agents_pipeline(
+  base_dir: str = "",
+  pipeline_input_file: str = "work/input.txt",
+  collector_model: str = "deepseek-r1:latest",
+  writer_model: str = "llama3.1:8b",
+  reviewer_model: str = "deepseek-r1:latest",
+) -> Dict[str, Any]:
+  """Run the existing pipeline without modifying setup files."""
+  target = _resolve_base_dir(base_dir)
+  run_script = target / "run_agents.sh"
+  if not run_script.exists():
+    return {
+      "ok": False,
+      "error": f"Missing {run_script}. Run setup_ollama_agents_environment(action='setup') first.",
+      "base_dir": str(target),
+    }
+
+  pipeline_result = _run_pipeline(target, pipeline_input_file, collector_model, writer_model, reviewer_model)
+  return {
+    "ok": pipeline_result["ok"],
+    "base_dir": str(target),
+    "pipeline_input_file": pipeline_input_file,
+    "pipeline_result": pipeline_result,
+  }
+
+
+@mcp.tool()
+def run_role_agent(
+  role: str,
+  input_text: str = "",
+  input_file: str = "",
+  model: str = "",
+  base_dir: str = "",
+  save_output: bool = True,
+  output_subdir: str = "work/role_runs",
+) -> Dict[str, Any]:
+  """Run one role prompt against input text/file using an Ollama model."""
+  target = _resolve_base_dir(base_dir)
+  try:
+    role_name = _validate_role_name(role)
+  except ValueError as exc:
+    return {"ok": False, "error": str(exc)}
+
+  role_file = _role_file_path(target, role_name)
+  if not role_file.exists():
+    return {
+      "ok": False,
+      "error": f"Role prompt not found: {role_file}",
+      "base_dir": str(target),
+      "role": role_name,
+    }
+
+  user_text: Optional[str] = input_text.strip() or None
+  if not user_text and input_file.strip():
+    input_path = (target / input_file).resolve()
+    try:
+      input_path.relative_to(target.resolve())
+    except ValueError:
+      return {"ok": False, "error": "input_file must resolve under base_dir"}
+    if not input_path.exists():
+      return {"ok": False, "error": f"Input file not found: {input_path}"}
+    user_text = input_path.read_text(errors="ignore")
+  if not user_text:
+    return {"ok": False, "error": "Provide input_text or input_file"}
+
+  model_name = model.strip()
+  if not model_name:
+    model_name = os.getenv("OLLAMA_DEFAULT_ROLE_MODEL", "llama3.1:8b")
+
+  system_prompt = role_file.read_text(errors="ignore")
+  run_result = _run_ollama_with_system_user(model_name, system_prompt, user_text)
+
+  output_path = None
+  if save_output and run_result["ok"]:
+    out_dir = (target / output_subdir).resolve()
+    try:
+      out_dir.relative_to(target.resolve())
+    except ValueError:
+      return {"ok": False, "error": "output_subdir must resolve under base_dir"}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    output_path = out_dir / f"{role_name}_{ts}.md"
+    output_path.write_text(run_result["stdout"])
+
+  return {
+    "ok": run_result["ok"],
+    "base_dir": str(target),
+    "role": role_name,
+    "role_prompt_path": str(role_file),
+    "model": model_name,
+    "input_source": "text" if input_text.strip() else "file",
+    "output_path": str(output_path) if output_path else None,
+    "result": run_result,
+  }
+
+
+@mcp.tool()
+def list_agent_roles(base_dir: str = "") -> Dict[str, Any]:
+  """List current role prompts in the agents directory."""
+  target = _resolve_base_dir(base_dir)
+  roles = _list_role_names(target)
+  return {
+    "ok": True,
+    "base_dir": str(target),
+    "agents_dir": str(target / "agents"),
+    "roles": roles,
+    "count": len(roles),
+  }
+
+
+@mcp.tool()
+def get_agent_role_prompt(role: str, base_dir: str = "") -> Dict[str, Any]:
+  """Get prompt content for one role."""
+  target = _resolve_base_dir(base_dir)
+  try:
+    role_name = _validate_role_name(role)
+  except ValueError as exc:
+    return {"ok": False, "error": str(exc)}
+
+  role_file = _role_file_path(target, role_name)
+  if not role_file.exists():
+    return {
+      "ok": False,
+      "error": f"Role prompt not found: {role_file}",
+      "base_dir": str(target),
+      "role": role_name,
+    }
+  return {
+    "ok": True,
+    "base_dir": str(target),
+    "role": role_name,
+    "path": str(role_file),
+    "prompt": role_file.read_text(),
+  }
+
+
+@mcp.tool()
+def upsert_agent_role_prompt(
+  role: str,
+  prompt: str,
+  base_dir: str = "",
+  overwrite: bool = True,
+) -> Dict[str, Any]:
+  """Create or update a role prompt file, enabling more roles over time."""
+  target = _resolve_base_dir(base_dir)
+  try:
+    role_name = _validate_role_name(role)
+  except ValueError as exc:
+    return {"ok": False, "error": str(exc)}
+
+  if not prompt.strip():
+    return {"ok": False, "error": "prompt cannot be empty"}
+
+  role_file = _role_file_path(target, role_name)
+  result = _write_file(role_file, prompt, overwrite)
+  return {
+    "ok": True,
+    "base_dir": str(target),
+    "role": role_name,
+    "path": str(role_file),
+    "result": result,
+  }
+
+
+@mcp.tool()
+def delete_agent_role_prompt(
+  role: str,
+  base_dir: str = "",
+  confirm: bool = False,
+) -> Dict[str, Any]:
+  """Delete a role prompt file (requires confirm=true)."""
+  if not confirm:
+    return {"ok": False, "error": "confirm=true is required to delete role prompts"}
+
+  target = _resolve_base_dir(base_dir)
+  try:
+    role_name = _validate_role_name(role)
+  except ValueError as exc:
+    return {"ok": False, "error": str(exc)}
+
+  role_file = _role_file_path(target, role_name)
+  if not role_file.exists():
+    return {
+      "ok": False,
+      "error": f"Role prompt not found: {role_file}",
+      "base_dir": str(target),
+      "role": role_name,
+    }
+  role_file.unlink()
+  return {
+    "ok": True,
+    "base_dir": str(target),
+    "role": role_name,
+    "deleted_path": str(role_file),
   }
 
 
