@@ -2,6 +2,89 @@
 
 MCP server that scaffolds and runs a local Ollama "sub-agent" pipeline with three role prompts (`collector`, `writer`, `reviewer`) and `run_agents.sh`.
 
+## What This MCP Actually Does
+
+This MCP provides a repeatable local pipeline where the same local LLM is run multiple times with different roles, and each output is saved as a file.
+
+Think of it as a small offline workflow engine:
+
+1. Collector agent
+- Input: messy notes, logs, metrics, tickets
+- Output: normalized JSON plus short evidence notes
+- Purpose: reduce invention and force structured extraction
+2. Writer agent
+- Input: only the collector JSON
+- Output: polished report in Markdown
+- Purpose: consistent report structure and faster drafting
+3. Reviewer agent
+- Input: JSON plus report
+- Output: PASS/FAIL plus issues and required fixes
+- Purpose: quality gate for contradictions, omissions, and vague claims
+
+These are separate role runs with a shared workspace. They are not autonomous background workers.
+
+## Core Use Cases
+
+1. Monthly or weekly ops reports
+- Input: incidents, key metrics, change summary
+- Output: normalized data JSON, final report, quality review
+- Benefit: consistent month-over-month format with fewer manual errors
+2. Post-incident and RCA packs
+- Collector extracts timeline, impact, mitigation, and actions
+- Writer drafts RCA document
+- Reviewer checks missing root cause, owners, due dates, and unsupported claims
+3. Change review and maintenance summaries
+- Turn change notes and outcomes into a standard "what changed / risk / rollback / verification" artifact
+4. Messy input to clean artifact conversion
+- Examples: meeting notes to minutes, ticket dumps to executive summaries, log snippets to hypotheses and next checks
+5. Offline or privacy-sensitive operations
+- Keeps processing local; no cloud dependency for the pipeline itself
+
+## Why Split Into Roles Instead Of One Prompt
+
+Single large prompts often mix extraction and writing, miss sections, and drift in style over time.
+
+Role separation gives:
+
+- separation of concerns
+- reusable monthly process
+- audit trail (`02_data.json` as source of truth)
+- quality gate (reviewer can block weak drafts)
+
+## Non-Goals
+
+- It does not auto-pull Grafana/Prometheus/Jira data unless you add separate scripts or API integrations.
+- It does not run roles in parallel by default.
+- It does not know your environment automatically; you still provide inputs.
+
+## Quick Start In 60 Seconds
+
+Prereqs:
+
+- `ollama` installed and running
+- `python3` available
+- MCP server configured with env vars:
+- `OLLAMA_AGENTS_MCP_STATE_DIR=<MCP_DATA_ROOT>/ollama-agents-mcp`
+- `OLLAMA_AGENTS_BASE_DIR=<MCP_DATA_ROOT>/ollama-agents-mcp/workspace`
+
+Then run:
+
+1. `health_check()`
+2. `setup_ollama_agents_environment(action="setup", create_test_input=true)`
+3. `list_agent_roles()` (expect `collector`, `writer`, `reviewer`)
+4. `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt", collector_model="deepseek-r1:latest")`
+
+Expected outputs under `<MCP_DATA_ROOT>/ollama-agents-mcp/workspace/work`:
+
+- `01_collector_*.md`
+- `02_data.json`
+- `04_report_*.md`
+- `06_review_*.md`
+
+Optional hardening on run:
+
+- `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt", collector_retries=3, enforce_schema=true)`
+
 ## Path Placeholders
 
 - `<MCP_STUFF_ROOT>`: parent MCP checkout root (example: `/Volumes/Data/_ai/_mcp/mcp_stuff`)
