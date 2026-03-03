@@ -417,6 +417,77 @@ def _resolve_model_choice(choice: str, fallback: str) -> str:
   return picked if picked else fallback
 
 
+def _ensure_under_base(path: Path, base_dir: Path) -> None:
+  path.relative_to(base_dir.resolve())
+
+
+def _build_combined_input(base_dir: Path, input_spec: str) -> Dict[str, Any]:
+  spec = input_spec.strip()
+  if not spec:
+    spec = _default_input_file(base_dir)
+
+  parts = [p.strip() for p in spec.split(",") if p.strip()]
+  if not parts:
+    parts = [_default_input_file(base_dir)]
+
+  source_files: List[Path] = []
+  for part in parts:
+    candidate = (base_dir / part).resolve()
+    try:
+      _ensure_under_base(candidate, base_dir)
+    except ValueError:
+      return {"ok": False, "error": f"Input path must resolve under base_dir: {part}"}
+    if not candidate.exists():
+      return {"ok": False, "error": f"Input path not found: {part}"}
+    if candidate.is_dir():
+      files = sorted(p for p in candidate.rglob("*") if p.is_file())
+      if not files:
+        return {"ok": False, "error": f"Input folder has no files: {part}"}
+      source_files.extend(files)
+    else:
+      source_files.append(candidate)
+
+  # De-duplicate while preserving order.
+  unique_sources: List[Path] = []
+  seen: set[str] = set()
+  for file_path in source_files:
+    key = str(file_path)
+    if key not in seen:
+      seen.add(key)
+      unique_sources.append(file_path)
+
+  if len(unique_sources) == 1:
+    rel = unique_sources[0].relative_to(base_dir.resolve())
+    return {
+      "ok": True,
+      "pipeline_input_file": str(rel),
+      "source_files": [str(rel)],
+      "combined": False,
+    }
+
+  work_dir = base_dir / "work"
+  work_dir.mkdir(parents=True, exist_ok=True)
+  ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+  combined_path = work_dir / f"00_combined_input_{ts}.txt"
+
+  chunks: List[str] = []
+  for src in unique_sources:
+    rel = src.relative_to(base_dir.resolve())
+    chunks.append(f"### SOURCE: {rel}")
+    chunks.append(src.read_text(errors="ignore"))
+    chunks.append("")
+  combined_path.write_text("\n".join(chunks))
+
+  rel_combined = combined_path.relative_to(base_dir.resolve())
+  return {
+    "ok": True,
+    "pipeline_input_file": str(rel_combined),
+    "source_files": [str(p.relative_to(base_dir.resolve())) for p in unique_sources],
+    "combined": True,
+    "combined_file": str(rel_combined),
+  }
+
+
 @mcp.tool()
 def health_check() -> Dict[str, Any]:
   """Check readiness for creating and running local Ollama sub-agent environments."""
@@ -566,7 +637,13 @@ def run_ollama_agents_pipeline(
   collector_retries: int = 3,
   enforce_schema: bool = False,
 ) -> Dict[str, Any]:
-  """Run the existing pipeline without modifying setup files."""
+  """Run the existing pipeline without modifying setup files.
+
+  pipeline_input_file supports:
+  - single file path (for example: work/input.txt)
+  - comma-separated file paths (for example: work/a.txt,work/b.txt)
+  - folder path (recursively combines files)
+  """
   target = _resolve_base_dir(base_dir)
   run_script = target / "run_agents.sh"
   if not run_script.exists():
@@ -576,9 +653,17 @@ def run_ollama_agents_pipeline(
       "base_dir": str(target),
     }
 
+  input_resolution = _build_combined_input(target, pipeline_input_file)
+  if not input_resolution["ok"]:
+    return {
+      "ok": False,
+      "error": input_resolution["error"],
+      "base_dir": str(target),
+    }
+
   pipeline_result = _run_pipeline(
     target,
-    pipeline_input_file,
+    input_resolution["pipeline_input_file"],
     collector_model,
     writer_model,
     reviewer_model,
@@ -588,7 +673,10 @@ def run_ollama_agents_pipeline(
   return {
     "ok": pipeline_result["ok"],
     "base_dir": str(target),
-    "pipeline_input_file": pipeline_input_file,
+    "pipeline_input_file": input_resolution["pipeline_input_file"],
+    "input_sources": input_resolution["source_files"],
+    "combined_input": input_resolution["combined"],
+    "combined_input_file": input_resolution.get("combined_file"),
     "collector_retries": collector_retries,
     "enforce_schema": enforce_schema,
     "pipeline_result": pipeline_result,
@@ -599,10 +687,19 @@ def run_ollama_agents_pipeline(
 def list_pipeline_run_options(base_dir: str = "") -> Dict[str, Any]:
   """List available workspace input files and local Ollama models with defaults."""
   target = _resolve_base_dir(base_dir)
+  work_dir = target / "work"
+  available_input_dirs: List[str] = []
+  if work_dir.exists():
+    available_input_dirs = sorted(
+      str(path.relative_to(target.resolve()))
+      for path in work_dir.iterdir()
+      if path.is_dir()
+    )
   return {
     "ok": True,
     "base_dir": str(target),
     "available_input_files": _list_workspace_inputs(target),
+    "available_input_dirs": available_input_dirs,
     "available_ollama_models": _list_ollama_models(),
     "defaults": {
       "input_file": _default_input_file(target),
@@ -612,6 +709,11 @@ def list_pipeline_run_options(base_dir: str = "") -> Dict[str, Any]:
       "collector_retries": 3,
       "enforce_schema": False,
     },
+    "input_examples": [
+      "work/input.txt",
+      "work/a.txt,work/b.txt",
+      "work/",
+    ],
     "hint": "Leave parameters blank in run_pipeline_guided to accept defaults.",
   }
 

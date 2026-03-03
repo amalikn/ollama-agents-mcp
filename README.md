@@ -132,12 +132,18 @@ If you want selectable options with default-enter behavior:
 2. `run_pipeline_guided(...)`
 - leave fields blank to use defaults
 - set only fields you care about (for example `collector_model`)
+- `input_file` supports:
+- single file: `work/input.txt`
+- multiple files: `work/a.txt,work/b.txt`
+- folder: `work/` (recursively combines files into one generated input)
 
 Example:
 
 - `run_pipeline_guided()`
 - `run_pipeline_guided(collector_model="deepseek-r1:latest")`
 - `run_pipeline_guided(input_file="work/input.txt")`
+- `run_pipeline_guided(input_file="work/incident.txt,work/changes.txt")`
+- `run_pipeline_guided(input_file="work/")`
 
 ## Path Placeholders
 
@@ -278,6 +284,8 @@ Setup and run in one call:
 Run pipeline directly:
 
 - `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt")`
+- `run_ollama_agents_pipeline(pipeline_input_file="work/input_a.txt,work/input_b.txt")`
+- `run_ollama_agents_pipeline(pipeline_input_file="work/")`
 - `run_ollama_agents_pipeline(pipeline_input_file="work/input.txt", collector_retries=3, enforce_schema=true)`
 
 Run a single role directly (works for future added roles too):
