@@ -148,7 +148,7 @@ Example:
 ## Path Placeholders
 
 - `<MCP_STUFF_ROOT>`: parent MCP checkout root (example: `/Volumes/Data/_ai/_mcp/mcp_stuff`)
-- `<MCP_DATA_ROOT>`: persistent MCP runtime data root (example: `/Volumes/Data/_ai/mcp-data`)
+- `<MCP_DATA_ROOT>`: persistent MCP runtime data root (example: `/Volumes/Data/_ai/_mcp/mcp-data`)
 
 ## What It Sets Up
 
@@ -314,3 +314,14 @@ Delete a role prompt:
 - Model pulls and pipeline execution can take several minutes depending on model size and hardware.
 - Pipeline hardening includes collector retry and fallback JSON extraction when fenced blocks are missing.
 - `enforce_schema=true` validates collector JSON contains keys: `incidents,changes,metrics,risks,next_month_plan`.
+
+## Local Customization Tracking
+- Local machine-specific integration, client wiring, and operational state are tracked under the external data root.
+- Local metadata path: `/Volumes/Data/_ai/_mcp/mcp-data/<name>/meta`
+- Repo-side capability contract is in `docs/local-capability/`.
+- Secrets are never stored in repo docs; only variable names and loading locations are documented.
+
+## Local Enhancements Capture (2026-03-13)
+- Captured current local changes, configuration updates, and operational enhancements for GitHub publication.
+- Includes synchronization with sub-repo link updates where applicable.
+- Cross-reference local docs and capability notes added in this repository.

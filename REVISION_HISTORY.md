@@ -10,3 +10,7 @@ Repository-local revision summary.
 | `82bb2e8` | `2026-03-04T03:28:17+11:00` | docs: enhance README with workflow overview and quick-start |
 | `cd84540` | `2026-03-04T03:13:20+11:00` | feat: harden pipeline with collector retries, JSON fallback parsing, and schema validation |
 | `a317df9` | `2026-03-04T02:43:02+11:00` | feat: expand role tools and add generic run_role_agent workflow |
+
+## 2026-03-13
+- Recorded and prepared local enhancements for publication.
+- Updated repository documentation to reflect current operational and integration changes.

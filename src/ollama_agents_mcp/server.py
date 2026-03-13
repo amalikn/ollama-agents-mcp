@@ -16,7 +16,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("ollama-agents-mcp")
 
-DEFAULT_STATE_DIR = "/Volumes/Data/_ai/mcp-data/ollama-agents-mcp"
+DEFAULT_STATE_DIR = "/Volumes/Data/_ai/_mcp/mcp-data/ollama-agents-mcp/data"
 ALLOWED_ACTIONS = {"setup", "run", "setup_and_run"}
 
 COLLECTOR_PROMPT = """ROLE: Collector
